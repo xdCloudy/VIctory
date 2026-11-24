@@ -60,11 +60,12 @@ comparable census; the source dashboard reads it directly.
 
 ## Progress tracking
 
-[Progress dashboard and methodology](docs/progress.md) · [Source report workflow](../../actions/workflows/progress.yml)
+[Upstream progress monitor and methodology](docs/progress.md) · [Workflow runs](https://github.com/xdCloudy/VIctory/actions/workflows/progress.yml)
 
-Generate a source-only inventory or measure local import and shader coverage,
-with HTML, SVG, machine-readable metrics and snapshot history. These are
-separate metrics, not an estimate of overall playability. Local game-derived
+This fork-only workflow reads current upstream main without merging it. Download
+its dashboard artifact for implementation, correctness, gameplay and production
+readiness, commit history and upstream CI evidence. The status table above is a
+snapshot from the branch, not the live upstream monitor. Local game-derived
 reports must stay outside the repository.
 
 ## Getting started
