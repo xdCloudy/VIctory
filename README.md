@@ -44,6 +44,15 @@ What each part does today and what it still needs:
 | Textures | Console tiled layouts and detiling for the modes the title uses | Render-target metadata planes |
 | Series S mode | Runs through the menus to the loading screen | The world, as above |
 
+## Progress tracking
+
+[Progress dashboard and methodology](docs/progress.md) · [Source report workflow](../../actions/workflows/progress.yml)
+
+Generate a source-only inventory or measure local import and shader coverage,
+with HTML, SVG, machine-readable metrics and snapshot history. These are
+separate metrics, not an estimate of overall playability. Local game-derived
+reports must stay outside the repository.
+
 ## Getting started
 
 Requirements: Windows 10/11 x64, a CPU with AVX2, a Direct3D 12 GPU with
@@ -89,10 +98,13 @@ title's window has focus:
 
 ```
 victory inspect <exe|dll> [--imports] [--exports]
-victory census [paths...] [--missing] [--strict]
+victory census [paths...] [--missing] [--strict] [--progress-dir <dir>]
+victory progress --output <dir>
+victory progress-history <report> <report>... --output <dir>
 victory lib-exports <import.lib> [--list]
 victory shader-info [paths...] [--verbose] [--disasm]
 victory translate [paths...] [--validate] [--pipelines] [--list] [--jobs N]
+                  [--progress-dir <dir>]
 victory run <exe> [--execute] [--unimplemented trap|zero] [--strict]
             [--console series-x|series-s] [-- <title arguments>]
 victory config
