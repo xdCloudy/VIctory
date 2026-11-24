@@ -222,7 +222,7 @@ def collect(root, sha, evidence, full=True):
         categories[category] = {"total": len(rows), "verified": sum(r["state"] == "verified" for r in rows), "items": rows}
     counts = collections.Counter(e["state"] for e in inv["exports"])
     candidates = collections.Counter(e["candidate"] for e in inv["exports"])
-    registered = sum(e["state"] != "missing" for e in inv["exports"])
+    registered = sum(e["candidate"] != "reviewed missing requirement" for e in inv["exports"])
     return {
         "schema": SCHEMA, "commit": sha, "commit_date": git(root, "show", "-s", "--format=%cI", sha),
         "readme_date": status_date(readme), "shader_translation_reported": shader_counts(readme),
@@ -239,6 +239,9 @@ def render(report, history):
     out = ['<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VIctory upstream monitor</title><style>body{font:15px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem;background:#111827;color:#e5e7eb}a{color:#93c5fd}table{border-collapse:collapse;width:100%;margin:1rem 0}td,th{text-align:left;padding:.55rem;border-bottom:1px solid #374151;overflow-wrap:anywhere}progress{width:10rem;accent-color:#34d399}small{color:#cbd5e1}section{margin:2rem 0}</style><main><h1>VIctory upstream monitor</h1>']
     out.append(f'<p>Upstream revision {link(REPO + "/commit/" + report["commit"], report["commit"][:12])} · {esc(report["commit_date"])} · README status {esc(report["readme_date"] or "unknown")}</p>')
     out.append('<p>No overall playability percentage. Unknown is not verified; source declarations and reported milestones are not correctness tests.</p><p><a href="report.json">JSON</a> · <a href="history.json">History JSON</a></p>')
+    out.append('<h2>Upstream CI</h2>')
+    checks = report.get("upstream_checks", [])
+    out.append("<ul>" + "".join(f'<li>{link(c["url"], c["name"])}: {esc(c["result"])}</li>' for c in checks) + "</ul>" if checks else "<p>No check-run evidence retrieved for this revision.</p>")
     out.append('<h2>Reported shader translation</h2><table><tr><th>Stage</th><th>Published coverage</th></tr>')
     for key in ("mesh", "vertex_pixel", "compute"):
         v = report["shader_translation_reported"].get(key)
@@ -278,6 +281,7 @@ def main():
     p.add_argument("--evidence", type=pathlib.Path, required=True)
     p.add_argument("--output", type=pathlib.Path, required=True)
     p.add_argument("--history", type=int, default=20)
+    p.add_argument("--checks", type=pathlib.Path)
     a = p.parse_args()
     if not 1 <= a.history <= 100:
         p.error("history must be 1–100")
@@ -286,6 +290,8 @@ def main():
     revisions = git(a.upstream, "rev-list", "--first-parent", f"--max-count={a.history}", sha).splitlines()
     report = collect(a.upstream, sha, evidence)
     report["observed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    raw_checks = json.loads(a.checks.read_text(encoding="utf-8")) if a.checks else {}
+    report["upstream_checks"] = [{"name": c["name"], "result": c.get("conclusion") or c["status"], "url": c.get("html_url") or ""} for c in raw_checks.get("check_runs", []) if c.get("head_sha") == sha]
     history = [collect(a.upstream, revision, evidence, False) for revision in revisions]
     a.output.mkdir(parents=True, exist_ok=False)
     (a.output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
