@@ -67,32 +67,32 @@ impl Report {
 
     fn svg(&self) -> String {
         let height = 82 + self.rows.len() * 58 + self.notes.len() * 22;
-        let mut s = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="960" height="{height}" viewBox="0 0 960 {height}" role="img" aria-labelledby="title"><title id="title">{}</title><rect width="960" height="{height}" rx="12" fill="#111827"/><g font-family="Arial,sans-serif" fill="#f1f5f9"><text x="24" y="34" font-size="22" font-weight="bold">{}</text><text x="24" y="58" font-size="13" fill="#a5b4fc">Bars with denominators show measured coverage; counts alone are not coverage.</text>"#, xml(self.title), xml(self.title));
+        let mut s = format!(r##"<svg xmlns="http://www.w3.org/2000/svg" width="960" height="{height}" viewBox="0 0 960 {height}" role="img" aria-labelledby="title"><title id="title">{}</title><rect width="960" height="{height}" rx="12" fill="#111827"/><g font-family="Arial,sans-serif" fill="#f1f5f9"><text x="24" y="34" font-size="22" font-weight="bold">{}</text><text x="24" y="58" font-size="13" fill="#a5b4fc">Bars with denominators show measured coverage; counts alone are not coverage.</text>"##, xml(self.title), xml(self.title));
         for (i, row) in self.rows.iter().enumerate() {
             let y = 86 + i * 58;
-            let _ = write!(s, r#"<text x="24" y="{y}" font-size="14">{}</text><text x="936" y="{y}" font-size="14" text-anchor="end">{}</text>"#, xml(&row.label), xml(&row.value()));
+            let _ = write!(s, r##"<text x="24" y="{y}" font-size="14">{}</text><text x="936" y="{y}" font-size="14" text-anchor="end">{}</text>"##, xml(&row.label), xml(&row.value()));
             if let Some(total) = row.total.filter(|&total| total > 0) {
                 let width = 912.0 * row.count as f64 / total as f64;
-                let _ = write!(s, r#"<rect x="24" y="{}" width="912" height="9" rx="4" fill="#374151"/><rect x="24" y="{}" width="{width:.2}" height="9" rx="4" fill="#34d399"/>"#, y+7, y+7);
+                let _ = write!(s, r##"<rect x="24" y="{}" width="912" height="9" rx="4" fill="#374151"/><rect x="24" y="{}" width="{width:.2}" height="9" rx="4" fill="#34d399"/>"##, y+7, y+7);
             }
-            let _ = write!(s, r#"<text x="24" y="{}" font-size="12" fill="#cbd5e1">{}</text>"#, y+34, xml(&row.detail));
+            let _ = write!(s, r##"<text x="24" y="{}" font-size="12" fill="#cbd5e1">{}</text>"##, y+34, xml(&row.detail));
         }
         for (i, note) in self.notes.iter().enumerate() {
             let y = 86 + self.rows.len() * 58 + i * 22;
-            let _ = write!(s, r#"<text x="24" y="{y}" font-size="12" fill="#cbd5e1">{}</text>"#, xml(note));
+            let _ = write!(s, r##"<text x="24" y="{y}" font-size="12" fill="#cbd5e1">{}</text>"##, xml(note));
         }
         s.push_str("</g></svg>\n");
         s
     }
 
     fn html(&self) -> String {
-        let mut s = format!(r#"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{}</title><style>body{{font:16px system-ui;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#182230}}table{{border-collapse:collapse;width:100%}}td,th{{text-align:left;border-bottom:1px solid #bbb;padding:.6rem}}th[scope=row]{{overflow-wrap:anywhere}}img{{max-width:100%;height:auto}}progress{{width:100%;accent-color:#087f5b}}@media(prefers-color-scheme:dark){{body{{background:#111827;color:#eee}}a{{color:#a5b4fc}}}}</style><main><h1>{}</h1><p><a href="metrics.tsv">Download machine-readable metrics</a> · <a href="progress.svg">SVG</a></p><table><thead><tr><th>Metric</th><th>Result</th><th>Scope</th></tr></thead><tbody>"#, xml(self.title), xml(self.title));
+        let mut s = format!(r##"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{}</title><style>body{{font:16px system-ui;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#182230}}table{{border-collapse:collapse;width:100%}}td,th{{text-align:left;border-bottom:1px solid #bbb;padding:.6rem}}th[scope=row]{{overflow-wrap:anywhere}}img{{max-width:100%;height:auto}}progress{{width:100%;accent-color:#087f5b}}@media(prefers-color-scheme:dark){{body{{background:#111827;color:#eee}}a{{color:#a5b4fc}}}}</style><main><h1>{}</h1><p><a href="metrics.tsv">Download machine-readable metrics</a> · <a href="progress.svg">SVG</a></p><table><thead><tr><th>Metric</th><th>Result</th><th>Scope</th></tr></thead><tbody>"##, xml(self.title), xml(self.title));
         for row in &self.rows {
             let bar = match row.total {
-                Some(total) if total > 0 => format!(r#"<progress max="{total}" value="{}" aria-label="{}"></progress>"#, row.count, xml(&row.label)),
+                Some(total) if total > 0 => format!(r##"<progress max="{total}" value="{}" aria-label="{}"></progress>"##, row.count, xml(&row.label)),
                 _ => String::new(),
             };
-            let _ = write!(s, r#"<tr><th scope="row">{}</th><td>{}{bar}</td><td>{}</td></tr>"#, xml(&row.label), xml(&row.value()), xml(&row.detail));
+            let _ = write!(s, r##"<tr><th scope="row">{}</th><td>{}{bar}</td><td>{}</td></tr>"##, xml(&row.label), xml(&row.value()), xml(&row.detail));
         }
         s.push_str("</tbody></table><h2>Methodology</h2><ul>");
         for note in &self.notes {
