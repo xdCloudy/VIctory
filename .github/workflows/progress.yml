@@ -44,7 +44,9 @@ jobs:
             echo "::warning::Upstream CI status unavailable"
           fi
       - name: Generate upstream dashboard
+        shell: bash
         run: |
+          set -o pipefail
           python3 tracker/.github/scripts/upstream_progress.py \
             --upstream upstream \
             --evidence tracker/.github/scripts/progress-evidence.json \
