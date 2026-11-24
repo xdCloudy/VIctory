@@ -147,7 +147,9 @@ pub fn check(path: &str, content: &[u8]) -> Vec<String> {
     let mut problems = Vec::new();
     let name = path.rsplit('/').next().unwrap_or(path);
     let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
-    let allowed = ALLOWED_NAMES.contains(&name)
+    // This fork-only monitor is source code, not a game-derived artifact.
+    let allowed = path == ".github/scripts/upstream_progress.py"
+        || ALLOWED_NAMES.contains(&name)
         || ext
             .as_deref()
             .is_some_and(|e| ALLOWED_EXTENSIONS.contains(&e));
