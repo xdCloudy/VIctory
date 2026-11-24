@@ -1,60 +1,60 @@
-name: Progress
+name: Upstream progress monitor
 
 on:
-  pull_request:
   push:
-    branches: [main]
+    branches: [feat/progress-tracker]
   workflow_dispatch:
 
 permissions:
   contents: read
+  checks: read
 
 concurrency:
-  group: progress-${{ github.ref }}
+  group: upstream-progress
   cancel-in-progress: true
 
 jobs:
-  report:
-    runs-on: windows-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-      - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-      - name: Test report generator
-        run: cargo test --locked -p victory progress::tests
-      - name: Check asset policy
-        run: cargo xtask policy
-      - name: Generate source-only dashboard
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $out = Join-Path $env:RUNNER_TEMP 'victory-progress'
-          cargo run --locked -p victory -- progress --output $out
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (!(Test-Path (Join-Path $out 'complete.txt'))) { throw 'Incomplete report' }
-          Set-Content (Join-Path $out 'revision.txt') $env:GITHUB_SHA
-      - uses: actions/upload-artifact@v4
-        with:
-          name: progress-${{ github.sha }}
-          path: ${{ runner.temp }}/victory-progress
-          if-no-files-found: error
-      - uses: actions/upload-pages-artifact@v3
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.VICTORY_PROGRESS_PAGES == 'true'
-        with:
-          path: ${{ runner.temp }}/victory-progress
-
-  deploy:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.VICTORY_PROGRESS_PAGES == 'true'
-    needs: report
+  monitor:
+    if: github.ref == 'refs/heads/feat/progress-tracker'
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    timeout-minutes: 15
     steps:
-      - name: Deploy source-only dashboard
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Checkout tracker branch
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          path: tracker
+      - name: Checkout latest upstream main (read only)
+        uses: actions/checkout@v5
+        with:
+          repository: Marvisak/VIctory
+          ref: main
+          fetch-depth: 25
+          persist-credentials: false
+          path: upstream
+      - name: Test monitor
+        run: python3 tracker/.github/scripts/upstream_progress.py --self-test
+      - name: Read upstream CI check runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git -C upstream rev-parse HEAD)"
+          if ! gh api "repos/Marvisak/VIctory/commits/${sha}/check-runs?per_page=100" > "$RUNNER_TEMP/checks.json"; then
+            printf '{}\n' > "$RUNNER_TEMP/checks.json"
+            echo "::warning::Upstream CI status unavailable"
+          fi
+      - name: Generate upstream dashboard
+        run: |
+          python3 tracker/.github/scripts/upstream_progress.py \
+            --upstream upstream \
+            --evidence tracker/.github/scripts/progress-evidence.json \
+            --checks "$RUNNER_TEMP/checks.json" \
+            --history 20 \
+            --output "$RUNNER_TEMP/victory-monitor" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload dashboard and data
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-progress-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/victory-monitor
+          if-no-files-found: error
+          retention-days: 90
