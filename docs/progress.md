@@ -15,7 +15,10 @@ cargo run --locked -p victory -- progress --output "$env:TEMP\victory-source-1"
 This reads the actual HLE registry, not source-code regexes. It counts registered
 exports once per module, not once per DLL pattern. A registered export may be a
 stub, and there is no known complete Xbox API denominator. The counts are
-inventory, not percentages. The Windows registry includes platform-specific
+inventory, not percentages. The public dashboard also renders the existing maintainer-reported shader
+counts from the structured README table, labelled with its status date. This
+is not a new game census and the numbers only change when the README is updated.
+The Windows registry includes platform-specific
 modules that other hosts omit.
 
 The Progress workflow builds and tests this report from source alone, stores the
@@ -64,7 +67,7 @@ cargo run --locked -p victory -- progress-history "$env:TEMP\victory-imports-1" 
 ```
 
 Supply snapshots oldest first. The history dashboard shows every measurement with
-its original numerator and denominator, rejects mixed report types and incomplete
+its original numerator and denominator, rejects mixed report types, measurement modes and incomplete
 snapshots, and preserves the inputs. Use the TSV for longitudinal charts. Do not
 infer a regression or improvement from percentages when corpus, host, SDK or
 flags have changed. Retain commit SHA, title build identity, corpus selection,
