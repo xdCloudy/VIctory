@@ -16,12 +16,18 @@ use victory_shader::{
 use victory_shader::{io, resource};
 
 use crate::shader::{MAX_FILE, Source, sources};
+use crate::progress::{Report, Row};
 
 #[derive(Default)]
 struct Tally {
     containers: usize,
     duplicates: usize,
     programs: usize,
+    // Count all decoded programs before any translation stage can refuse them.
+    stage_totals: [usize; 4],
+    validation_attempts: [usize; 4],
+    pipeline_attempts: [usize; 4],
+    decode_failures: usize,
     translated: usize,
     instructions: usize,
     structured: usize,
@@ -94,6 +100,12 @@ impl Tally {
         self.containers += other.containers;
         self.duplicates += other.duplicates;
         self.programs += other.programs;
+        self.decode_failures += other.decode_failures;
+        for i in 0..4 {
+            self.stage_totals[i] += other.stage_totals[i];
+            self.validation_attempts[i] += other.validation_attempts[i];
+            self.pipeline_attempts[i] += other.pipeline_attempts[i];
+        }
         self.translated += other.translated;
         self.instructions += other.instructions;
         self.structured += other.structured;
@@ -158,7 +170,12 @@ pub fn run(
     pipelines: bool,
     list: bool,
     jobs: Option<usize>,
+    progress_dir: Option<&Path>,
 ) -> Result<()> {
+    if let Some(output) = progress_dir {
+        victory_core::ensure_outside_repo(output)?;
+        anyhow::ensure!(std::env::var_os("VICTORY_EMIT_DUMP").is_none(), "unset VICTORY_EMIT_DUMP when generating coverage reports");
+    }
     let paths = crate::default_paths(paths)?;
     let dll = validate.then(Validator::default_path).flatten();
     if validate {
@@ -181,17 +198,26 @@ pub fn run(
     let kept = std::sync::Arc::new(Mutex::new(Vec::new()));
     let threads =
         jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()));
+    anyhow::ensure!(threads > 0, "--jobs must be greater than zero");
+    let mut walk_errors = 0usize;
+    let mut read_errors = 0usize;
+    let mut oversized = 0usize;
     let seen = Mutex::new(HashSet::new());
     let total = Mutex::new(Tally::default());
     for root in &paths {
-        for entry in walkdir::WalkDir::new(root)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
-            if !entry.file_type().is_file() || entry.metadata().map_or(0, |m| m.len()) > MAX_FILE {
-                continue;
+        for entry in walkdir::WalkDir::new(root) {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => { walk_errors += 1; continue; }
+            };
+            if !entry.file_type().is_file() { continue; }
+            match entry.metadata() {
+                Ok(m) if m.len() > MAX_FILE => { oversized += 1; continue; }
+                Ok(_) => {},
+                Err(_) => { read_errors += 1; continue; }
             }
             let Ok(data) = std::fs::read(entry.path()) else {
+                read_errors += 1;
                 continue;
             };
             let jobs = sources(&data);
@@ -288,6 +314,43 @@ pub fn run(
             println!("pair {v} + {p}: {made}");
         }
     }
+    if let Some(output) = progress_dir {
+        let emitted = t.emitted + t.cs_emitted + t.ms_emitted;
+        let mut rows = vec![
+            Row::coverage("All decoded programs: IR built", t.translated, t.programs, "First translation stage"),
+            Row::coverage("All decoded programs: DXIL emitted", emitted, t.programs, "Includes programs refused before emission"),
+            Row::coverage("Structured IR", t.structured, t.programs, "Across all decoded programs"),
+            Row::coverage("Resources tracked", t.tracked, t.programs, "Across all decoded programs"),
+        ];
+        let stages = [
+            ("Vertex / pixel", t.emitted, t.validated, t.pipelines),
+            ("Compute", t.cs_emitted, t.cs_validated, t.cs_pipelines),
+            ("Mesh", t.ms_emitted, t.ms_validated, t.ms_pipelines),
+        ];
+        for (i, (stage, done, valid, made)) in stages.into_iter().enumerate() {
+            let total = t.stage_totals[i];
+            rows.push(Row::coverage(format!("{stage}: DXIL emitted"), done, total, "All decoded programs in stage"));
+            if validate {
+                rows.push(Row::coverage(format!("{stage}: DXIL validated"), valid, total, format!("{} validation attempts of {done} emitted", t.validation_attempts[i])));
+            }
+            if pipelines {
+                rows.push(Row::coverage(format!("{stage}: host pipeline created"), made, total, format!("{} pipeline attempts of {done} emitted; host-dependent", t.pipeline_attempts[i])));
+            }
+        }
+        rows.push(Row::inventory("Other decoded stages", t.stage_totals[3], "Not included in the three supported stage groups"));
+        Report {
+            title: "VIctory local shader coverage",
+            notes: vec![
+                format!("{} containers; {} duplicates; {} container/record decode failures.", t.containers, t.duplicates, t.decode_failures),
+                format!("{walk_errors} walk errors; {read_errors} read/metadata errors; {oversized} oversized files skipped."),
+                format!("Validation requested: {validate}; pipeline creation requested: {pipelines}."),
+                "Denominators are decoded programs, not all shaders in the title; unreadable records are excluded.".into(),
+                "DXIL emission, validation and pipeline creation do not prove rendering correctness or playability.".into(),
+                "Validation and pipeline results depend on the local SDK and hardware. Keep reports outside the repository.".into(),
+            ],
+            rows,
+        }.write(output)?;
+    }
     let mut lines = t.lines;
     lines.sort();
     for l in lines {
@@ -310,13 +373,16 @@ fn translate(
 ) {
     let example = || format!("{}{}", path.display(), source.label());
     let Some(bytes) = source.bytes() else {
+        t.decode_failures += 1;
         return t.fail("corrupt record".into(), example);
     };
     t.containers += 1;
     let Ok(container) = Container::parse(&bytes) else {
+        t.decode_failures += 1;
         return t.fail("no DXIL part (SM5 or older)".into(), example);
     };
     let Some(dxil) = container.part(FourCC::DXIL).map(|p| p.data) else {
+        t.decode_failures += 1;
         return t.fail("no DXIL part (SM5 or older)".into(), example);
     };
     if !lock(seen).insert(blake3::hash(dxil)) {
@@ -325,10 +391,14 @@ fn translate(
     }
     let programs = match native_programs(dxil) {
         Ok(p) => p,
-        Err(e) => return t.fail(e.to_string(), example),
+        Err(e) => {
+            t.decode_failures += 1;
+            return t.fail(e.to_string(), example);
+        }
     };
     for p in programs {
         t.programs += 1;
+        t.stage_totals[stage_index(p.stage)] += 1;
         match ir::build(&p.patched_code(), p.wave64, p.vgprs) {
             Ok(program) => {
                 t.translated += 1;
@@ -438,6 +508,7 @@ fn check(
         );
     }
     if let Some((h, stub_ps)) = &checks.host {
+        t.pipeline_attempts[stage_index(shader.stage)] += 1;
         let made = match shader.stage {
             HwStage::Vs => h.pipeline(&shader, stub_ps).map(drop),
             HwStage::Cs => h.compute_pipeline(&shader).map(drop),
@@ -457,6 +528,7 @@ fn check(
     let Some(v) = checks.validator.as_mut() else {
         return;
     };
+    t.validation_attempts[stage_index(shader.stage)] += 1;
     match v.validate(&mut shader.dxil) {
         Ok(()) => {
             *counter(t, shader.stage, 2) += 1;
@@ -490,6 +562,15 @@ fn check(
             }
             t.fail(format!("validator: {first}"), label);
         }
+    }
+}
+
+fn stage_index(stage: HwStage) -> usize {
+    match stage {
+        HwStage::Vs | HwStage::Ps => 0,
+        HwStage::Cs => 1,
+        HwStage::Ms => 2,
+        _ => 3,
     }
 }
 
