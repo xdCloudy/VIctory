@@ -5,6 +5,7 @@
 
 mod census;
 mod inspect;
+mod progress;
 mod run;
 mod shader;
 mod translate;
@@ -48,6 +49,15 @@ enum Command {
         /// List every missing `dll!function`, most used first.
         #[arg(long)]
         missing: bool,
+        /// Write a local coverage report to a new directory outside the repository.
+        #[arg(long)]
+        progress_dir: Option<PathBuf>,
+    },
+    /// Report the source HLE inventory without reading any title data.
+    Progress {
+        /// New output directory outside the repository.
+        #[arg(long)]
+        output: PathBuf,
     },
     /// List the `dll!export` pairs an import library describes.
     LibExports {
@@ -84,6 +94,9 @@ enum Command {
         /// Worker threads (default: every logical core).
         #[arg(long)]
         jobs: Option<usize>,
+        /// Write a local shader coverage report to a new directory outside the repository.
+        #[arg(long)]
+        progress_dir: Option<PathBuf>,
     },
     /// Prepare, map and bind a title executable; with --execute, run it.
     Run {
@@ -139,7 +152,9 @@ fn main() -> Result<()> {
             paths,
             strict,
             missing,
-        } => census::run(paths, strict, missing),
+            progress_dir,
+        } => census::run(paths, strict, missing, progress_dir.as_deref()),
+        Command::Progress { output } => progress::source(&output),
         Command::LibExports { lib, list } => inspect::lib_exports(&lib, list),
         Command::ShaderInfo {
             paths,
@@ -152,7 +167,8 @@ fn main() -> Result<()> {
             pipelines,
             list,
             jobs,
-        } => translate::run(paths, validate, pipelines, list, jobs),
+            progress_dir,
+        } => translate::run(paths, validate, pipelines, list, jobs, progress_dir.as_deref()),
         Command::Run {
             exe,
             unimplemented,
