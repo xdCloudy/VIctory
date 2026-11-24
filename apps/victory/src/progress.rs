@@ -45,22 +45,21 @@ impl Report {
         }
         // A new directory per measurement keeps earlier snapshots immutable.
         std::fs::create_dir(output).with_context(|| format!("create fresh report directory {}", output.display()))?;
-        let result = (|| -> Result<()> {
+        (|| -> Result<()> {
             for (name, content) in [
                 ("progress.svg", self.svg()),
                 ("index.html", self.html()),
                 ("metrics.tsv", self.tsv()),
+                ("metadata.txt", format!("{}\n{}\n", self.title, self.notes.join("\n"))),
             ] {
                 let path = output.join(name);
                 victory_core::ensure_outside_repo(&path)?;
                 std::fs::write(path, content)?;
             }
             Ok(())
-        })();
-        if result.is_err() {
-            // Leave the directory for diagnosis, but never advertise it as complete.
-            return result;
-        }
+        })()?;
+        // Written last; history ignores interrupted snapshots.
+        std::fs::write(output.join("complete.txt"), "schema=1\n")?;
         println!("Report: {}", output.display());
         Ok(())
     }
@@ -118,6 +117,52 @@ fn cell(s: &str) -> String {
 
 fn xml(s: &str) -> String {
     cell(s).replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;").replace(['\u{fffe}', '\u{ffff}'], "\u{fffd}")
+}
+
+
+/// Compare an explicitly ordered series of immutable reports. Reports with
+/// different report types are rejected. An operator must keep the same corpus,
+/// host and flags; matching report types do not prove comparability.
+pub(crate) fn history(inputs: &[std::path::PathBuf], output: &Path) -> Result<()> {
+    anyhow::ensure!(inputs.len() >= 2, "history needs at least two reports");
+    victory_core::ensure_outside_repo(output)?;
+    let mut previous: Option<String> = None;
+    let mut rows = Vec::new();
+    for (i, input) in inputs.iter().enumerate() {
+        victory_core::ensure_outside_repo(input)?;
+        anyhow::ensure!(std::fs::read_to_string(input.join("complete.txt"))? == "schema=1\n", "incomplete or unsupported report");
+        let metadata = std::fs::read_to_string(input.join("metadata.txt"))?;
+        let kind = metadata.lines().next().unwrap_or_default().to_owned();
+        if let Some(expected) = &previous {
+            anyhow::ensure!(expected == &kind, "cannot combine different report types");
+        } else {
+            previous = Some(kind);
+        }
+        let data = std::fs::read_to_string(input.join("metrics.tsv"))?;
+        let mut lines = data.lines();
+        anyhow::ensure!(lines.next() == Some("schema\tmetric\tcount\ttotal\tdetail"), "unsupported metrics schema");
+        for line in lines {
+            let fields: Vec<_> = line.split('\t').collect();
+            anyhow::ensure!(fields.len() == 5 && fields[0] == "1", "malformed metric");
+            let count = fields[2].parse::<usize>()?;
+            let label = format!("Run {} — {}", i + 1, fields[1]);
+            let row = if fields[3].is_empty() {
+                Row::inventory(label, count, fields[4])
+            } else {
+                Row::coverage(label, count, fields[3].parse()?, fields[4])
+            };
+            rows.push(row);
+        }
+    }
+    Report {
+        title: "VIctory progress history",
+        notes: vec![
+            "Runs appear in supplied order, oldest first; each retains its own denominator.".into(),
+            "Only compare like-for-like corpora, host, flags and build configuration.".into(),
+            "Run numbers are ordering labels, not timestamps. Input directories are not exposed.".into(),
+        ],
+        rows,
+    }.write(output)
 }
 
 /// Public-safe, game-independent inventory. A registry entry may be a stub;
