@@ -45,21 +45,20 @@ impl Report {
         }
         // A new directory per measurement keeps earlier snapshots immutable.
         std::fs::create_dir(output).with_context(|| format!("create fresh report directory {}", output.display()))?;
-        (|| -> Result<()> {
-            for (name, content) in [
-                ("progress.svg", self.svg()),
-                ("index.html", self.html()),
-                ("metrics.tsv", self.tsv()),
-                ("metadata.txt", format!("{}\n{}\n", self.title, self.notes.join("\n"))),
-            ] {
-                let path = output.join(name);
-                victory_core::ensure_outside_repo(&path)?;
-                std::fs::write(path, content)?;
-            }
-            Ok(())
-        })()?;
+        for (name, content) in [
+            ("progress.svg", self.svg()),
+            ("index.html", self.html()),
+            ("metrics.tsv", self.tsv()),
+            ("metadata.txt", format!("{}\n{}\n", self.title, self.notes.join("\n"))),
+        ] {
+            let path = output.join(name);
+            victory_core::ensure_outside_repo(&path)?;
+            std::fs::write(path, content)?;
+        }
         // Written last; history ignores interrupted snapshots.
-        std::fs::write(output.join("complete.txt"), "schema=1\n")?;
+        let complete = output.join("complete.txt");
+        victory_core::ensure_outside_repo(&complete)?;
+        std::fs::write(complete, "schema=1\n")?;
         println!("Report: {}", output.display());
         Ok(())
     }
@@ -126,17 +125,19 @@ fn xml(s: &str) -> String {
 pub(crate) fn history(inputs: &[std::path::PathBuf], output: &Path) -> Result<()> {
     anyhow::ensure!(inputs.len() >= 2, "history needs at least two reports");
     victory_core::ensure_outside_repo(output)?;
-    let mut previous: Option<String> = None;
+    let mut previous: Option<(String, Option<String>)> = None;
     let mut rows = Vec::new();
     for (i, input) in inputs.iter().enumerate() {
         victory_core::ensure_outside_repo(input)?;
         anyhow::ensure!(std::fs::read_to_string(input.join("complete.txt"))? == "schema=1\n", "incomplete or unsupported report");
         let metadata = std::fs::read_to_string(input.join("metadata.txt"))?;
         let kind = metadata.lines().next().unwrap_or_default().to_owned();
+        let context = metadata.lines().find(|line| line.starts_with("Mode:") || line.starts_with("Validation requested:") || line.starts_with("Host OS:")).map(str::to_owned);
+        let identity = (kind, context);
         if let Some(expected) = &previous {
-            anyhow::ensure!(expected == &kind, "cannot combine different report types");
+            anyhow::ensure!(expected == &identity, "cannot combine different report types or measurement modes");
         } else {
-            previous = Some(kind);
+            previous = Some(identity);
         }
         let data = std::fs::read_to_string(input.join("metrics.tsv"))?;
         let mut lines = data.lines();
@@ -183,7 +184,8 @@ pub(crate) fn source(output: &Path) -> Result<()> {
         notes: vec![
             "Registration does not establish implementation correctness; stubs may be present.".into(),
             "No global Xbox API denominator is known. Counts are not gameplay progress.".into(),
-            "No title files were read. Windows and non-Windows inventories differ.".into(),
+            format!("Host OS: {}; no title files read.", std::env::consts::OS),
+            "Windows and non-Windows inventories differ.".into(),
         ],
         rows,
     }.write(output)
@@ -212,6 +214,34 @@ mod tests {
         assert!(r.html().contains("max=\"2\" value=\"1\""));
         assert!(r.tsv().contains("1\ta<&\" \t1\t2\tdetail line\n"));
         assert!(r.tsv().contains("1\tcount\t3\t\t\n"));
+    }
+
+    #[test]
+    fn snapshots_and_history_round_trip() {
+        let root = std::env::temp_dir().join(format!(
+            "victory-progress-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let a = root.join("a");
+        let b = root.join("b");
+        let result = root.join("history");
+        let report = |count| Report {
+            title: "Test",
+            notes: vec!["Mode: same".into()],
+            rows: vec![Row::coverage("test metric", count, 4, "fixture")],
+        };
+        report(1).write(&a).unwrap();
+        report(2).write(&b).unwrap();
+        assert!(report(3).write(&a).is_err());
+        history(&[a.clone(), b.clone()], &result).unwrap();
+        let data = std::fs::read_to_string(result.join("metrics.tsv")).unwrap();
+        assert!(data.contains("Run 1 — test metric\t1\t4"));
+        assert!(data.contains("Run 2 — test metric\t2\t4"));
+        std::fs::remove_file(b.join("complete.txt")).unwrap();
+        assert!(history(&[a, b], &root.join("incomplete")).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
