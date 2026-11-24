@@ -59,6 +59,13 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Compare previously generated local or source reports, oldest first.
+    ProgressHistory {
+        #[arg(required = true, num_args = 2..)]
+        reports: Vec<PathBuf>,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// List the `dll!export` pairs an import library describes.
     LibExports {
         lib: PathBuf,
@@ -155,6 +162,7 @@ fn main() -> Result<()> {
             progress_dir,
         } => census::run(paths, strict, missing, progress_dir.as_deref()),
         Command::Progress { output } => progress::source(&output),
+        Command::ProgressHistory { reports, output } => progress::history(&reports, &output),
         Command::LibExports { lib, list } => inspect::lib_exports(&lib, list),
         Command::ShaderInfo {
             paths,
