@@ -166,10 +166,31 @@ pub(crate) fn history(inputs: &[std::path::PathBuf], output: &Path) -> Result<()
     }.write(output)
 }
 
+
+/// Read only the maintainer-authored aggregate counts already published in the
+/// README. Never use a locally generated corpus report for a public dashboard.
+fn published_shader_rows(readme: &str) -> Result<Vec<Row>> {
+    let (_, rest) = readme.split_once("<!-- progress:begin -->").context("missing published coverage table")?;
+    let (table, _) = rest.split_once("<!-- progress:end -->").context("unterminated published coverage table")?;
+    let mut rows = Vec::new();
+    for line in table.lines().filter(|line| line.starts_with('|')).skip(2) {
+        let fields: Vec<_> = line.trim_matches('|').split('|').map(str::trim).collect();
+        anyhow::ensure!(fields.len() == 3, "invalid published coverage row");
+        let count = fields[1].parse::<usize>()?;
+        let total = fields[2].parse::<usize>()?;
+        anyhow::ensure!(count <= total && total > 0, "invalid published coverage counts");
+        rows.push(Row::coverage(format!("Reported world {} shaders", fields[0]), count, total, "Maintainer-reported README snapshot; not measured in CI"));
+    }
+    anyhow::ensure!(!rows.is_empty(), "published coverage table is empty");
+    Ok(rows)
+}
+
 /// Public-safe, game-independent inventory. A registry entry may be a stub;
 /// no denominator for all Xbox APIs is available in the source tree.
 pub(crate) fn source(output: &Path) -> Result<()> {
-    let mut rows = Vec::new();
+    let readme = include_str!("../../../README.md");
+    let mut rows = published_shader_rows(readme)?;
+    let status = readme.lines().find(|line| line.starts_with("## Status (")).unwrap_or("Status date not specified").trim_start_matches("## ");
     let mut total = 0;
     let mut modules: Vec<_> = victory_hle::registry().iter().collect();
     modules.sort_by_key(|m| m.name);
@@ -182,6 +203,7 @@ pub(crate) fn source(output: &Path) -> Result<()> {
     Report {
         title: "VIctory source inventory",
         notes: vec![
+            format!("Published shader counts: README {status}. No CI game scan."),
             "Registration does not establish implementation correctness; stubs may be present.".into(),
             "No global Xbox API denominator is known. Counts are not gameplay progress.".into(),
             format!("Host OS: {}; no title files read.", std::env::consts::OS),
@@ -194,6 +216,14 @@ pub(crate) fn source(output: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_table_uses_existing_readme_counts() {
+        let rows = published_shader_rows(include_str!("../../../README.md")).unwrap();
+        assert!(!rows.is_empty());
+        assert!(rows.iter().all(|row| row.total.is_some_and(|total| total >= row.count)));
+        assert!(published_shader_rows("no table").is_err());
+    }
 
     #[test]
     fn zero_and_unknown_are_not_percentages() {
