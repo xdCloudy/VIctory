@@ -1,36 +1,105 @@
-# Progress tracking
+# Upstream progress monitor (fork branch)
 
-The tracker measures separate things rather than estimating a percentage of a
-playable game. Each snapshot has an HTML dashboard, an SVG graphic, a versioned
-TSV metrics table, methodology metadata, and a completion marker. No report
-contains game binaries, shaders, function names or local paths. **Local reports
-are derived from user files and must never be committed or uploaded to public CI.**
+This monitor lives on `feat/progress-tracker` only. It checks out the current
+`Marvisak/VIctory:main` separately each time; it does not sync, merge, publish
+to Pages or change either repository's main branch. The existing local Rust
+coverage commands are independent of this workflow.
 
-## Public source inventory
+## Running
 
-```powershell
-cargo run --locked -p victory -- progress --output "$env:TEMP\victory-source-1"
+1. Enable Actions in your fork if disabled.
+2. Open the [Upstream progress monitor](https://github.com/xdCloudy/VIctory/actions/workflows/progress.yml).
+3. Push to the tracker branch to trigger a run, or rerun an existing successful
+   workflow run from its Actions page. Each rerun fetches current upstream main.
+4. Download the `upstream-progress-<run>-<attempt>` artifact and open
+   `index.html`; `report.json` and `history.json` contain the raw measurements.
+
+GitHub normally requires a workflow_dispatch definition on the default branch
+before showing a Run workflow button or accepting a manual dispatch. Because
+this tracker must remain branch-only, use a branch push or Actions rerun instead.
+For a fresh run without editing the tracker:
+
+```sh
+git switch feat/progress-tracker
+git commit --allow-empty -m "chore: refresh upstream progress"
+git push origin feat/progress-tracker
 ```
 
-This reads the actual HLE registry, not source-code regexes. It counts registered
-exports once per module, not once per DLL pattern. A registered export may be a
-stub, and there is no known complete Xbox API denominator. The counts are
-inventory, not percentages. The public dashboard also renders the existing maintainer-reported shader
-counts from the structured README table, labelled with its status date. This
-is not a new game census and the numbers only change when the README is updated.
-The Windows registry includes platform-specific
-modules that other hosts omit.
+Scheduled GitHub workflows likewise run only from the default branch; no
+schedule is installed. Artifacts are retained for 90 days and the report
+reconstructs the latest 20 first-parent upstream commits on each run.
 
-The Progress workflow builds and tests this report from source alone, stores the
-commit-specific report as a GitHub Actions artifact, and optionally deploys the
-latest main-branch dashboard to GitHub Pages. To enable Pages, a repository owner
-must configure Pages to use GitHub Actions and set the repository Actions variable
-`VICTORY_PROGRESS_PAGES` to `true`. No game corpus is ever configured in this workflow.
-If enabled, the dashboard is at `https://<owner>.github.io/VIctory/` and its SVG at
-`https://<owner>.github.io/VIctory/progress.svg`. Artifact retention is governed by
-GitHub; download snapshots for permanent history.
+## What is measured
 
-## Local title-specific reports
+- **Implementation:** recognized HLE export declarations, per-module functions,
+  probable constant/no-op or explicit stub candidates, test references and
+  separately reviewed lifecycle states (missing, stubbed, implemented, tested,
+  verified, unknown). No full Xbox API denominator is assumed. Source parsing
+  is heuristic and may miss macro-generated or changed registry layouts.
+- **Correctness:** API semantics, shader output, rendering, synchronization,
+  texture/audio decoding and storage. Upstream CI check runs are recorded
+  separately when accessible; a green suite does not verify every function.
+- **Gameplay:** boot, menus, intro, load, rendering, movement, driving, combat,
+  missions, story completion, saves and Series S mode. Narrow README matches
+  show reported milestones, never automatic verification.
+- **Production readiness:** AMD/NVIDIA/Intel stability, frame pacing,
+  extended stability, memory and regression qualification. The checklist is
+  proposed, not official upstream release criteria. Targets must be agreed
+  before evidence can establish a pass.
+
+Published shader counts come from the upstream README, with its status date,
+and are not remeasured by the workflow. The inventory and commit history are
+read directly from upstream Git. Unknown or stale evidence is never credited.
+
+## Reviewed evidence
+
+Edit `.github/scripts/progress-evidence.json` on this branch to record reviewed
+results. Start with an empty list; do not mark a feature verified solely because
+a README says it works. Each record must name the exact upstream commit, item
+ID (from report.json), lifecycle state, HTTPS evidence URL, test method and
+environment. Example (placeholder only, not actual evidence):
+
+```json
+{
+  "schema": 1,
+  "records": [
+    {
+      "id": "boot",
+      "commit": "0000000000000000000000000000000000000000",
+      "state": "tested",
+      "source": "https://example.org/test-report",
+      "method": "Boot smoke test",
+      "environment": "Windows; GPU and driver version"
+    }
+  ]
+}
+```
+
+Use `verified` only when the agreed behavior or threshold has been checked
+against reference evidence. `tested` means a test was run and reviewed, not
+that all required behavior passed; `implemented` means reviewed functional
+implementation, not just a declaration. Explicit missing API requirements may
+be added as `module:Function` IDs with evidence. Evidence for any different
+commit is stale and excluded until reviewed again. A new upstream commit may
+therefore lower the verified checklist percentage; this is intentionally
+conservative and not necessarily a regression.
+
+No combined whole-game percentage is generated. A complete verified checklist
+is a qualification milestone, not proof of zero bugs.
+
+## Safety and validation
+
+The workflow uses the upstream checkout as data only and does not execute
+upstream code or consume game assets. All repository tokens are read-only.
+Python standard-library tests run before report generation. The fork asset
+policy permits this exact Python source path while retaining all content checks.
+No game-derived reports may be committed or uploaded.
+
+For local title-specific import and shader census commands, see
+[Local reporting](#local-reporting) below.
+
+## Local reporting
+
 
 Use an already existing parent directory, and give every run a new output
 directory. The tool refuses to write inside a VIctory checkout or overwrite
